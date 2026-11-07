@@ -1,3 +1,10 @@
+﻿[CmdletBinding(SupportsShouldProcess)]
+param(
+    [switch]$CleanPrefetch,
+    [switch]$DryRun
+)
+if ($WhatIfPreference) { $DryRun = $true }
+
 # ================================================================
 #  BrowserCacheCleaner  v4  —  Nord Edition
 #  Scan → Report → Confirm [Y/N] → Clean
@@ -22,6 +29,12 @@ if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 
 $C = 'Cyan'; $G = 'Green'; $Y = 'Yellow'; $R = 'Red'
 $M = 'Magenta'; $W = 'White'; $DG = 'DarkGray'
+function Get-RunningBrowsers {
+    $browserProcesses = @('brave', 'chrome', 'msedge', 'firefox')
+    return (Get-Process -Name $browserProcesses -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty ProcessName -Unique)
+}
+
 
 # ════════════════════════════════════════════════════════════
 #  UI
@@ -108,6 +121,7 @@ function Get-FolderSize($path) {
 function Remove-FolderContents($path) {
     if (-not (Test-Path $path)) { return [double]0 }
     $before = Get-FolderSize $path
+    if ($DryRun) { return $before }
     Get-ChildItem $path -Recurse -Force -File   -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
     Get-ChildItem $path -Recurse -Force         -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     $freed = $before - (Get-FolderSize $path)
@@ -177,7 +191,8 @@ function Get-RecycleBinSize {
 }
 
 # ── Downloads junk ────────────────────────────────────────────
-$junkExts = @("*.tmp","*.temp","*.crdownload","*.part","*.partial","*.download","*.!ut","*.~*","Thumbs.db","desktop.ini")
+# Exclude in-progress downloads (*.crdownload, *.part, *.partial, *.download, *.!ut)
+$junkExts = @("*.tmp","*.temp","*.~*","Thumbs.db","desktop.ini")
 $dlFolder = [System.IO.Path]::Combine([System.Environment]::GetFolderPath('UserProfile'), 'Downloads')
 
 function Get-DownloadsJunkSize {
@@ -195,7 +210,7 @@ function Remove-DownloadsJunk {
     foreach ($ext in $junkExts) {
         Get-ChildItem $dlFolder -Filter $ext -Force -ErrorAction SilentlyContinue | ForEach-Object {
             $t += [math]::Round($_.Length / 1MB, 4)
-            Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+            if (-not $DryRun) { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
         }
     }
     return [math]::Round($t, 2)
@@ -349,13 +364,16 @@ if (Test-Path $ffRoam) {
 }
 Write-ScanLine "Firefox"       $ffTotal
 
-$tempItems = [System.Collections.Generic.List[PSCustomObject]]::new()
-@(
+$tempDefs = @(
     @{ Label="User Temp (%TEMP%)";             Path=$env:TEMP },
     @{ Label="Windows Temp";                   Path="C:\Windows\Temp" },
-    @{ Label="Prefetch Cache";                 Path="C:\Windows\Prefetch" },
     @{ Label="WinUpdate Download Cache";       Path="C:\Windows\SoftwareDistribution\Download" }
-) | ForEach-Object {
+)
+if ($CleanPrefetch) {
+    $tempDefs += @{ Label="Prefetch Cache (Opt-in)"; Path="C:\Windows\Prefetch" }
+}
+$tempItems = [System.Collections.Generic.List[PSCustomObject]]::new()
+$tempDefs | ForEach-Object {
     $o = [PSCustomObject]$_
     $o | Add-Member -NotePropertyName Size -NotePropertyValue (Get-FolderSize $o.Path)
     $tempItems.Add($o)
@@ -450,6 +468,17 @@ if ($key -ne "C") { continue }
 #  CONFIRM
 # ════════════════════════════════════════════════════════════
 
+$runningBrowsers = Get-RunningBrowsers
+if ($runningBrowsers) {
+    Write-Host ""
+    Write-Host "  ⚠ Running browsers detected: $($runningBrowsers -join ', ')" -ForegroundColor $Y
+    Write-Host "    Open browsers lock cache files. Please close them for a complete clean." -ForegroundColor $DG
+}
+if ($DryRun) {
+    Write-Host ""
+    Write-Host "  [DRY RUN MODE ENABLED - No files will be deleted]" -ForegroundColor $Y
+}
+
 Write-Host ""
 Write-Host "  ● Cookies, saved passwords & logins are " -NoNewline -ForegroundColor $W
 Write-Host "NOT" -NoNewline -ForegroundColor $G
@@ -521,14 +550,20 @@ $totalFreed += $tf; Write-CleanLine "Thumbnails" $tf
 $df = Remove-DownloadsJunk
 $totalFreed += $df; Write-CleanLine "Downloads Junk" $df
 
-try {
-    Clear-RecycleBin -Force -ErrorAction SilentlyContinue
-    $totalFreed += $rbTotal; Write-CleanLine "Recycle Bin" $rbTotal
-} catch {
-    Write-CleanLine "Recycle Bin" 0
+if ($DryRun) {
+    $totalFreed += $rbTotal; Write-CleanLine "Recycle Bin (DryRun)" $rbTotal
+} else {
+    try {
+        Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+        $totalFreed += $rbTotal; Write-CleanLine "Recycle Bin" $rbTotal
+    } catch {
+        Write-CleanLine "Recycle Bin" 0
+    }
 }
 
-ipconfig /flushdns | Out-Null
+if (-not $DryRun) {
+    ipconfig /flushdns | Out-Null
+}
 Write-Host "  ● DNS Cache      flushed" -ForegroundColor $G
 
 # ════════════════════════════════════════════════════════════

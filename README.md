@@ -101,7 +101,27 @@ Double-click **`RunCleaner.bat`**
 - Opens in **Windows Terminal** (falls back to PowerShell window if WT is not installed)
 - Scans everything first, shows the full report, then asks for confirmation
 
-> ⚠️ Administrator is required to clean `C:\Windows\Temp`, `Prefetch`, and Windows Update cache.
+> ℹ️ **Why Administrator is required:** Admin elevation is needed to inspect and clean system-level directories (C:\Windows\Temp, Windows Update download cache) and execute ipconfig /flushdns.
+
+### 3. Optional Parameters
+
+Run directly from PowerShell:
+
+`powershell
+# Dry run: previews what would be cleaned without deleting any files
+.\CleanCacheAndTemp.ps1 -DryRun
+
+# Include Windows Prefetch in the cleanup (opt-in)
+.\CleanCacheAndTemp.ps1 -CleanPrefetch
+
+# Combine flags
+.\CleanCacheAndTemp.ps1 -DryRun -CleanPrefetch
+`
+
+### 🛡️ Safety Protections
+- **In-Progress Downloads Protected:** Active and partial downloads (*.crdownload, *.part, *.partial, *.download) in your Downloads folder are strictly excluded.
+- **Running Browser Detection:** Detects open instances of Brave, Chrome, Edge, and Firefox and alerts you if files might be locked.
+- **Prefetch Safety:** Windows Prefetch is preserved by default to keep application launch times fast, and is only cleared if explicitly opted into with -CleanPrefetch.
 
 ---
 
